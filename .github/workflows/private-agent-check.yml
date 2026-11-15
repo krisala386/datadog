@@ -1,0 +1,46 @@
+name: Check Private Agents Data Collection
+
+on:
+  schedule:
+    - cron: "17 * * * *"   # every hour
+  workflow_dispatch:
+    inputs:
+      stale_minutes:
+        description: "Minutes without data before an agent counts as stopped"
+        required: false
+        default: "15"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      DD_ACCESS_TOKEN: ${{ secrets.DD_ACCESS_TOKEN }}
+      DD_SITE: "us3.datadoghq.com"          # Change to your Datadog site
+      STALE_MINUTES: ${{ inputs.stale_minutes || '15' }}
+      EXPECTED_LOCATIONS: ""                # optional, e.g. "pl:office-a,pl:office-b"
+      EXPECTED_HOSTS: ""                    # optional, e.g. "db-01,app-01"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ask the AI agent to check private agents
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Act as the private-agent-checker agent. Follow the instructions in
+            .claude/agents/private-agent-checker.md exactly and write private-agent-report.md.
+          claude_args: >-
+            --allowedTools "Bash(curl:*),Bash(jq:*),Bash(date:*),Bash(cat:*),Read,Write"
+
+      - name: Fail the run if data collection stopped
+        run: |
+          STATUS=$(head -n 1 private-agent-report.md 2>/dev/null || echo "NO_REPORT")
+          cat private-agent-report.md 2>/dev/null || true
+          if [ "$STATUS" != "HEALTHY" ]; then
+            echo "❌ Private agent data collection problem: $STATUS"
+            exit 1
+          fi
+          echo "✅ All private agents are sending data"
